@@ -1,24 +1,23 @@
-# TNAP Bot — Cloud Run production image
+# TNAP BOT — CLOUD RUN FINAL IMAGE
 FROM node:18-slim
 
-# Set working directory
 WORKDIR /app
 
-# Copy package files first
+# Copy package files
 COPY package*.json ./
 
-# Install production dependencies
-RUN npm install --omit=dev
+# Install ONLY production deps
+RUN npm ci --omit=dev
 
-# Copy everything (includes .env, src, controllers, etc.)
+# Copy source
 COPY . .
 
-# Cloud Run will set PORT in env
+# Cloud Run injects PORT
 ENV PORT=8080
 
-# Not required but good practice
+# Optional, but clear intent
 EXPOSE 8080
 
-# Start app using npm start (defined in package.json)
-CMD ["npm", "start"]
+# 🔥 IMPORTANT: run node directly
+CMD ["node", "src/index.js"]
 

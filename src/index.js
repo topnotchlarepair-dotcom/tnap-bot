@@ -1,67 +1,74 @@
 // FILE: src/index.js
 
 /**
- * SUPREME TELEGRAM BOT — ENTRY POINT (FIXED)
+ * SUPREME TELEGRAM BOT — CLOUD RUN ENTRY POINT
  * -------------------------------------------------------
- * Loads:
- *  ✔ env variables
- *  ✔ Express server
- *  ✔ Telegram Engine
- *  ✔ Webhook controller
- *  ✔ Worker (BullMQ)
- *  ✔ All engine components (commands, callbacks, router, fsm, events)
+ * ✔ Express HTTP server (required by Cloud Run)
+ * ✔ Health check endpoint
+ * ✔ Telegram webhook endpoint
+ * ✔ Engine + Worker bootstrap
  */
 
 import "dotenv/config";
 import express from "express";
 
 // =====================================================
-// IMPORTANT: load engines BEFORE controller & server
-// This prevents cyclic imports and registers all commands
+// PRELOAD ENGINE MODULES (registry side-effects)
 // =====================================================
 import "./engine/telegram.commands.js";
 import "./engine/telegram.callback.js";
-import "./engine/telegram.middleware.default.js"; 
-import "./engine/telegram.events.js";       // if exists
+import "./engine/telegram.middleware.default.js";
+// import "./engine/telegram.events.js"; // если используешь — раскомментируй
 // =====================================================
 
+// Core engine
 import { telegramEngine } from "./engine/telegram.engine.js";
-import { telegramWorker } from "./engine/telegram.worker.js";
 
-// Controller
+// Worker (BullMQ)
+import "./engine/telegram.worker.js";
+
+// Webhook controller
 import { handleTelegramWebhook } from "./controllers/telegram.controller.js";
 
-// Logs
+// Logger
 import { logInfo } from "./utils/logger.js";
 
+// =====================================================
 // EXPRESS APP
+// =====================================================
 const app = express();
 app.use(express.json());
 
-// -----------------------------------------------------
-// HEALTH CHECK
-// -----------------------------------------------------
+// =====================================================
+// HEALTH CHECK — ОБЯЗАТЕЛЬНО для Cloud Run
+// =====================================================
 app.get("/", (req, res) => {
-  res.status(200).json({ ok: true, engine: "SUPREME", timestamp: Date.now() });
+  res.status(200).send("TNAP BOT OK");
 });
 
-// -----------------------------------------------------
+// =====================================================
 // TELEGRAM WEBHOOK ENDPOINT
-// -----------------------------------------------------
-app.post("/api/telegram", handleTelegramWebhook);
+// =====================================================
+app.post("/api/telegram", async (req, res) => {
+  try {
+    await handleTelegramWebhook(req, res);
+  } catch (err) {
+    console.error("Webhook error:", err);
+    res.sendStatus(500);
+  }
+});
 
-// -----------------------------------------------------
-// START SERVER
-// -----------------------------------------------------
+// =====================================================
+// START SERVER (Cloud Run waits for PORT)
+// =====================================================
 const PORT = process.env.PORT || 8080;
 
 app.listen(PORT, () => {
-  logInfo(`🚀 SUPREME BOT SERVER ONLINE on port ${PORT}`);
+  logInfo(`🚀 SUPREME BOT SERVER LISTENING ON PORT ${PORT}`);
 
-  // Start engine
   telegramEngine.startup();
 
-  logInfo("🔧 Worker: ACTIVE");
-  logInfo("📡 Webhook: READY /api/telegram");
+  logInfo("📡 Webhook endpoint: /api/telegram");
+  logInfo("🔧 BullMQ worker: ACTIVE");
 });
 

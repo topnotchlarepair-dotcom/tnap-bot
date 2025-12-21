@@ -1,8 +1,8 @@
-// FILE: src/services/telegram.js
 /**
- * TELEGRAM TRANSPORT (LOW LEVEL)
- * ---------------------------------------
- * The ONLY place that talks to Telegram HTTP API
+ * TELEGRAM TRANSPORT (DIRECT HTTP)
+ * --------------------------------
+ * Single source of truth for Telegram API calls
+ * NO QUEUES. NO WORKERS. DIRECT SEND.
  */
 
 import axios from "axios";
@@ -16,74 +16,144 @@ if (!BOT_TOKEN) {
 
 const API_BASE = `https://api.telegram.org/bot${BOT_TOKEN}`;
 
-// ======================================================
-// SEND TEXT
-// ======================================================
+/* ======================================================
+   SEND TEXT MESSAGE
+====================================================== */
 export async function telegramSendMessage(chatId, text, keyboard = null) {
+  const payload = {
+    chat_id: chatId,
+    text,
+    parse_mode: "HTML",
+    disable_web_page_preview: true
+  };
+
+  if (keyboard) {
+    payload.reply_markup = keyboard;
+  }
+
   try {
-    const payload = {
-      chat_id: chatId,
-      text,
-      parse_mode: "HTML"
-    };
+    logInfo("📤 Telegram SEND →", { chatId });
 
-    if (keyboard) {
-      payload.reply_markup = keyboard;
-    }
+    const res = await axios.post(`${API_BASE}/sendMessage`, payload);
 
-    await axios.post(`${API_BASE}/sendMessage`, payload);
-    logInfo("📨 Telegram text sent", { chatId });
+    logInfo("✅ Telegram SENT", {
+      chatId,
+      messageId: res.data?.result?.message_id
+    });
 
+    return res.data;
   } catch (err) {
-    logError("❌ telegramSendMessage failed", err);
+    logError("❌ Telegram SEND FAILED", {
+      chatId,
+      error: err?.response?.data || err.message
+    });
     throw err;
   }
 }
 
-// ======================================================
-// SEND PHOTO
-// ======================================================
+/* ======================================================
+   UPDATE MESSAGE (EDIT)
+====================================================== */
+export async function updateTelegramMessage(chatId, messageId, card) {
+  const payload = {
+    chat_id: chatId,
+    message_id: messageId,
+    text: card.text,
+    parse_mode: "HTML",
+    disable_web_page_preview: true
+  };
+
+  if (card.keyboard) {
+    payload.reply_markup = card.keyboard;
+  }
+
+  try {
+    logInfo("✏️ Telegram EDIT →", { chatId, messageId });
+
+    const res = await axios.post(`${API_BASE}/editMessageText`, payload);
+
+    logInfo("✅ Telegram EDITED", {
+      chatId,
+      messageId
+    });
+
+    return res.data;
+  } catch (err) {
+    logError("❌ Telegram EDIT FAILED", {
+      chatId,
+      messageId,
+      error: err?.response?.data || err.message
+    });
+    throw err;
+  }
+}
+
+/* ======================================================
+   SEND PHOTO
+====================================================== */
 export async function telegramSendPhoto(chatId, photo, caption = "", keyboard = null) {
+  const payload = {
+    chat_id: chatId,
+    photo,
+    caption,
+    parse_mode: "HTML"
+  };
+
+  if (keyboard) {
+    payload.reply_markup = keyboard;
+  }
+
   try {
-    const payload = {
-      chat_id: chatId,
-      photo,
-      caption
-    };
+    logInfo("📸 Telegram PHOTO →", { chatId });
 
-    if (keyboard) {
-      payload.reply_markup = keyboard;
-    }
+    const res = await axios.post(`${API_BASE}/sendPhoto`, payload);
 
-    await axios.post(`${API_BASE}/sendPhoto`, payload);
-    logInfo("🖼 Telegram photo sent", { chatId });
+    logInfo("✅ Telegram PHOTO SENT", {
+      chatId,
+      messageId: res.data?.result?.message_id
+    });
 
+    return res.data;
   } catch (err) {
-    logError("❌ telegramSendPhoto failed", err);
+    logError("❌ Telegram PHOTO FAILED", {
+      chatId,
+      error: err?.response?.data || err.message
+    });
     throw err;
   }
 }
 
-// ======================================================
-// SEND DOCUMENT
-// ======================================================
+/* ======================================================
+   SEND DOCUMENT
+====================================================== */
 export async function telegramSendDocument(chatId, document, caption = "", keyboard = null) {
+  const payload = {
+    chat_id: chatId,
+    document,
+    caption,
+    parse_mode: "HTML"
+  };
+
+  if (keyboard) {
+    payload.reply_markup = keyboard;
+  }
+
   try {
-    const payload = {
-      chat_id: chatId,
-      document,
-      caption
-    };
+    logInfo("📎 Telegram DOCUMENT →", { chatId });
 
-    if (keyboard) {
-      payload.reply_markup = keyboard;
-    }
+    const res = await axios.post(`${API_BASE}/sendDocument`, payload);
 
-    await axios.post(`${API_BASE}/sendDocument`, payload);
-    logInfo("📎 Telegram document sent", { chatId });
+    logInfo("✅ Telegram DOCUMENT SENT", {
+      chatId,
+      messageId: res.data?.result?.message_id
+    });
 
+    return res.data;
   } catch (err) {
-    logError("❌ telegramSendDocument failed", err);
+    logError("❌ Telegram DOCUMENT FAILED", {
+      chatId,
+      error: err?.response?.data || err.message
+    });
     throw err;
   }
 }

@@ -12,10 +12,10 @@ app.use(express.json());
 // ======================================================
 // CONFIG
 // ======================================================
-const PORT = process.env.PORT || 8080;
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
 const REDIS_URL = process.env.REDIS_URL;
+const SERVER_PORT = process.env.PORT || 8080;
 
 // DISPATCH CHAT
 const DISPATCH_CHAT_ID = -1003362682354;
@@ -62,9 +62,7 @@ app.post("/api/telegram", async (req, res) => {
   }
 
   try {
-    // ==================================================
-    // /jobtest — dispatch only
-    // ==================================================
+    // /jobtest
     if (
       update.message &&
       update.message.chat.id === DISPATCH_CHAT_ID &&
@@ -74,9 +72,7 @@ app.post("/api/telegram", async (req, res) => {
       return res.json({ ok: true });
     }
 
-    // ==================================================
     // CALLBACKS
-    // ==================================================
     if (update.callback_query) {
       const { id, data, message } = update.callback_query;
 
@@ -91,13 +87,10 @@ app.post("/api/telegram", async (req, res) => {
         await upsertCalendarEvent(jobId, tech);
       }
 
-      // TECH ON THE WAY
+      // ON THE WAY
       if (data.startsWith("tech_on_the_way:")) {
         const [, jobId] = data.split(":");
 
-        console.log(`🚗 ON THE WAY → job ${jobId}`);
-
-        // 1️⃣ Update card text
         await tg("editMessageCaption", {
           chat_id: message.chat.id,
           message_id: message.message_id,
@@ -105,7 +98,6 @@ app.post("/api/telegram", async (req, res) => {
           parse_mode: "Markdown"
         });
 
-        // 2️⃣ SET 30 MIN TIMER
         await telegramQueue.add(
           "SHOW_COMPLETE_BUTTONS",
           {
@@ -114,7 +106,7 @@ app.post("/api/telegram", async (req, res) => {
             jobId
           },
           {
-            delay: 3 * 60 * 1000,
+            delay: 5 * 60 * 1000, // 5 MIN TEST
             jobId: `show-complete-${jobId}`
           }
         );
@@ -128,7 +120,7 @@ app.post("/api/telegram", async (req, res) => {
 });
 
 // ======================================================
-// UI — DISPATCH CARD
+// DISPATCH CARD
 // ======================================================
 async function sendJobCard(chatId) {
   const jobId = 1241;
@@ -176,12 +168,7 @@ async function updateAssignedCard(message, tech) {
     chat_id: message.chat.id,
     message_id: message.message_id,
     caption: message.caption.replace("Assigned: —", `Assigned: ${tech}`),
-    parse_mode: "Markdown",
-    reply_markup: {
-      inline_keyboard: [
-        [{ text: "🔁 Change technician", callback_data: `reassign:1241` }]
-      ]
-    }
+    parse_mode: "Markdown"
   });
 }
 
@@ -193,12 +180,7 @@ async function forwardToTechnician(message, tech, jobId) {
 
   const keyboard = {
     inline_keyboard: [
-      [
-        {
-          text: "🚗 On the way",
-          callback_data: `tech_on_the_way:${jobId}`
-        }
-      ]
+      [{ text: "🚗 On the way", callback_data: `tech_on_the_way:${jobId}` }]
     ]
   };
 
@@ -212,7 +194,7 @@ async function forwardToTechnician(message, tech, jobId) {
 }
 
 // ======================================================
-// WORKER — 30 MIN TIMER
+// WORKER — TIMER
 // ======================================================
 new Worker(
   "telegram-timers",
@@ -220,8 +202,6 @@ new Worker(
     if (job.name !== "SHOW_COMPLETE_BUTTONS") return;
 
     const { chatId, messageId, jobId } = job.data;
-
-    console.log(`⏱ TIMER FIRED → job ${jobId}`);
 
     await tg("editMessageReplyMarkup", {
       chat_id: chatId,
@@ -238,29 +218,8 @@ new Worker(
 );
 
 // ======================================================
-// CALENDAR (stub)
+// STUB
 // ======================================================
 async function upsertCalendarEvent(jobId, tech) {
-  console.log(`📅 Calendar update → job ${jobId}, tech ${tech}`);
-}
-
-// ======================================================
-// TELEGRAM API
-// ======================================================
-async function tg(method, payload) {
-  return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  });
-}
-
-async function answerCallback(id) {
-  await tg("answerCallbackQuery", { callback_query_id: id });
-}
-
-// ======================================================
-app.listen(PORT, () => {
-  console.log("🚀 TNAP BOT LIVE (PRODUCTION MODE)");
-});
+  console.log(`📅 Calendar update → job ${jobId},
 

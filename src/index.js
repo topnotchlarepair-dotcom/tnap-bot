@@ -14,14 +14,12 @@ const PORT = process.env.PORT || 8080;
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
 
-// ✅ DISPATCH CHAT ID (уже подтверждён)
+// ✅ DISPATCH CHAT ID
 const DISPATCH_CHAT_ID = -1003362682354;
 
-// ❌ ПОКА ЗАГЛУШКИ — МЫ ИХ ЗАМЕНИМ ПОСЛЕ ЛОГОВ
+// ✅ REAL TECH GROUP CHAT IDS
 const TECH_CHATS = {
-  Danil: -1001111111111,
-  Abdulla: -1002222222222,
-  Eugene: -1003333333333
+  Danil: -1003494289706
 };
 
 if (!BOT_TOKEN) {
@@ -41,37 +39,31 @@ app.post("/api/telegram", async (req, res) => {
   const update = req.body;
 
   // ==================================================
-  // 🔥 STEP 1 — LOG EVERY CHAT_ID (CRITICAL)
+  // LOG CHAT IDS (DEBUG)
   // ==================================================
   if (update.message?.chat) {
-    console.log("📣 INCOMING MESSAGE CHAT");
-    console.log({
+    console.log("📣 INCOMING MESSAGE CHAT", {
       chat_id: update.message.chat.id,
       type: update.message.chat.type,
-      title: update.message.chat.title || null,
-      username: update.message.chat.username || null
+      title: update.message.chat.title || null
     });
   }
 
   if (update.callback_query?.message?.chat) {
-    console.log("📣 INCOMING CALLBACK CHAT");
-    console.log({
+    console.log("📣 INCOMING CALLBACK CHAT", {
       chat_id: update.callback_query.message.chat.id,
       type: update.callback_query.message.chat.type,
       title: update.callback_query.message.chat.title || null
     });
   }
 
-  // ==================================================
-  // FILTER
-  // ==================================================
   if (!update.message && !update.callback_query) {
     return res.json({ ok: true });
   }
 
   try {
     // ==================================================
-    // COMMAND: /jobtest (ONLY DISPATCH CHAT)
+    // COMMAND: /jobtest (DISPATCH ONLY)
     // ==================================================
     if (
       update.message &&
@@ -93,7 +85,7 @@ app.post("/api/telegram", async (req, res) => {
       if (data.startsWith("assign:")) {
         const [, jobId, tech] = data.split(":");
 
-        console.log(`🧑‍🔧 ASSIGN CLICKED → ${tech}`);
+        console.log("🧑‍🔧 ASSIGN →", tech);
 
         await updateAssignedCard(message, tech);
         await forwardToTechnician(message, tech);
@@ -137,9 +129,7 @@ async function sendJobCard(chatId) {
         { text: "🍎 Apple Maps", url: `https://maps.apple.com/?daddr=${encoded}` }
       ],
       [
-        { text: "Danil", callback_data: `assign:${jobId}:Danil` },
-        { text: "Abdulla", callback_data: `assign:${jobId}:Abdulla` },
-        { text: "Eugene", callback_data: `assign:${jobId}:Eugene` }
+        { text: "Danil", callback_data: `assign:${jobId}:Danil` }
       ]
     ]
   };
@@ -171,18 +161,14 @@ async function showReassignButtons(message) {
     message_id: message.message_id,
     reply_markup: {
       inline_keyboard: [
-        [
-          { text: "Danil", callback_data: `assign:1241:Danil` },
-          { text: "Abdulla", callback_data: `assign:1241:Abdulla` },
-          { text: "Eugene", callback_data: `assign:1241:Eugene` }
-        ]
+        [{ text: "Danil", callback_data: `assign:1241:Danil` }]
       ]
     }
   });
 }
 
 // ======================================================
-// 🚨 TECH FORWARD (НАМ ВАЖЕН ЭТОТ ЛОГ)
+// FORWARD TO TECH GROUP
 // ======================================================
 async function forwardToTechnician(message, tech) {
   const chatId = TECH_CHATS[tech];
@@ -197,7 +183,7 @@ async function forwardToTechnician(message, tech) {
   await tg("sendPhoto", {
     chat_id: chatId,
     photo: message.photo.at(-1).file_id,
-    caption: message.caption + "\n\n🧑‍🔧 *Assigned to YOU*",
+    caption: message.caption + "\n\n🧑‍🔧 *Assigned to you*",
     parse_mode: "Markdown"
   });
 }
@@ -225,7 +211,7 @@ async function answerCallback(id) {
 }
 
 // ======================================================
-app.listen(PORT, () =>
-  console.log("🚀 TNAP BOT LIVE (PRODUCTION MODE)")
-);
+app.listen(PORT, () => {
+  console.log("🚀 TNAP BOT LIVE (PRODUCTION MODE)");
+});
 

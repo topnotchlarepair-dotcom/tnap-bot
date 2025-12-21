@@ -1,11 +1,11 @@
 // FILE: src/engine/telegram.commands.js
 /**
- * COMMAND ENGINE v2.0 (STABLE)
+ * COMMAND ENGINE v2.1 (FIXED)
  * ------------------------------------
- * ✔ Text commands (/start, /jobtest, etc.)
+ * ✔ Commands (/start, /job, /jobtest, etc.)
  * ✔ FSM callback handling
- * ✔ Full isolation between FSM and commands
- * ✔ No crashes, no silent fails
+ * ✔ NO silent fails
+ * ✔ dispatch() ALWAYS receives chatId
  */
 
 import { telegramSender } from "./telegram.sender.js";
@@ -19,7 +19,7 @@ import { getJobById } from "../storage/jobs.js";
 
 export class CommandEngine {
   constructor() {
-    logInfo("📌 CommandEngine v2.0 initialized");
+    logInfo("📌 CommandEngine v2.1 initialized");
   }
 
   // ======================================================
@@ -27,13 +27,13 @@ export class CommandEngine {
   // ======================================================
   async handle(update, next) {
     try {
-      // 1️⃣ CALLBACK QUERIES (FSM BUTTONS)
+      // CALLBACKS
       if (update?.callback_query) {
         await this.handleCallback(update.callback_query);
         return;
       }
 
-      // 2️⃣ TEXT COMMANDS
+      // COMMANDS
       const text = update?.message?.text;
       if (!text || !text.startsWith("/")) {
         return next?.();
@@ -72,7 +72,6 @@ export class CommandEngine {
   async handleCallback(cb) {
     try {
       await telegramSender.answerCallback(cb.id);
-
       if (!cb.data) return;
 
       let payload;
@@ -108,7 +107,7 @@ export class CommandEngine {
   }
 
   // ======================================================
-  // ROLE RESOLUTION
+  // ROLE
   // ======================================================
   resolveRole(telegramUserId, job) {
     if (telegramUserId === job.dispatcherTelegramId) {
@@ -141,7 +140,7 @@ export class CommandEngine {
 
     await telegramSender.text(
       chatId,
-      `👋 Welcome to <b>Top Notch Dispatch Bot</b>\n\nSystem online.`,
+      "👋 <b>Top Notch Dispatch Bot</b>\nSystem online.",
       null,
       2
     );
@@ -150,14 +149,12 @@ export class CommandEngine {
   async id(update) {
     const chatId = this.getChatId(update);
     if (!chatId) return;
-
     await telegramSender.text(chatId, `Chat ID: <b>${chatId}</b>`);
   }
 
   async tech(update) {
     const chatId = this.getChatId(update);
     if (!chatId) return;
-
     await telegramSender.text(chatId, "Select technician:", KB.technicians());
   }
 
@@ -181,12 +178,12 @@ export class CommandEngine {
       await telegramSender.photo(
         chatId,
         url,
-        `📍 <b>${job.address}</b>\nStreetView preview`
+        `📍 <b>${job.address}</b>`
       );
     }
 
     const card = `
-<b>New Job</b>
+<b>NEW JOB</b>
 👤 ${job.clientName}
 📞 ${job.phone}
 📍 ${job.address}
@@ -197,22 +194,22 @@ export class CommandEngine {
 Status: ${job.status}
     `.trim();
 
-    await telegramSender.dispatch(card, KB.technicians());
+    // ✅ FIX: chatId ПЕРЕДАЁТСЯ
+    await telegramSender.dispatch(
+      chatId,
+      card,
+      KB.technicians()
+    );
   }
 
   async jobtest(update) {
     const chatId = this.getChatId(update);
     if (!chatId) return;
 
-    try {
-      await telegramSender.text(
-        chatId,
-        "🧪 Jobtest OK. Command engine alive.",
-        null
-      );
-    } catch (err) {
-      logError("/jobtest failed", err);
-    }
+    await telegramSender.text(
+      chatId,
+      "🧪 /jobtest OK — command engine alive"
+    );
   }
 
   async help(update) {
@@ -222,19 +219,16 @@ Status: ${job.status}
     await telegramSender.text(
       chatId,
       `
-📘 <b>Available Commands</b>
-
-/start – welcome
-/help – command list
-/id – show chat ID
-/tech – choose technician
-/job – send test job
-/jobtest – health check
-/ping – bot status
-/debug – metrics
+/start
+/id
+/tech
+/job
+/jobtest
+/ping
+/debug
       `.trim(),
       null,
-      3
+      2
     );
   }
 
@@ -244,7 +238,7 @@ Status: ${job.status}
 
     await telegramSender.text(
       chatId,
-      `🏓 Pong!\nUptime: ${Math.round(
+      `🏓 Pong\nUptime: ${Math.round(
         (Date.now() - metrics.engineStart) / 1000
       )}s`
     );
@@ -255,28 +249,12 @@ Status: ${job.status}
     if (!chatId) return;
 
     const m = metrics;
-
     await telegramSender.text(
       chatId,
-      `
-🧪 <b>DEBUG METRICS</b>
-
-Queued: ${m.telegramJobsQueued}
-Success: ${m.telegramJobsSuccess}
-Failed: ${m.telegramJobsFailed}
-
-Worker Active: ${m.workerActive}
-Completed: ${m.workerCompleted}
-Failed: ${m.workerFailed}
-
-Engine Uptime: ${Math.round((Date.now() - m.engineStart) / 1000)}s
-      `.trim(),
-      null,
-      2
+      `DEBUG\nQueued: ${m.telegramJobsQueued}\nSuccess: ${m.telegramJobsSuccess}`
     );
   }
 }
 
-// EXPORT SINGLE INSTANCE
 export const commandEngine = new CommandEngine();
 

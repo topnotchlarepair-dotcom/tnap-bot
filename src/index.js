@@ -3,6 +3,8 @@
 import "dotenv/config";
 import express from "express";
 import fetch from "node-fetch";
+import { Queue, Worker } from "bullmq";
+import IORedis from "ioredis";
 
 const app = express();
 app.use(express.json());
@@ -13,6 +15,7 @@ app.use(express.json());
 const PORT = process.env.PORT || 8080;
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
+const REDIS_URL = process.env.REDIS_URL;
 
 // DISPATCH CHAT
 const DISPATCH_CHAT_ID = -1003362682354;
@@ -26,6 +29,22 @@ if (!BOT_TOKEN) {
   console.error("❌ BOT_TOKEN is not set");
   process.exit(1);
 }
+
+if (!REDIS_URL) {
+  console.error("❌ REDIS_URL is not set");
+  process.exit(1);
+}
+
+// ======================================================
+// REDIS + QUEUE
+// ======================================================
+const redis = new IORedis(REDIS_URL, {
+  maxRetriesPerRequest: null
+});
+
+const telegramQueue = new Queue("telegram-timers", {
+  connection: redis
+});
 
 // ======================================================
 // HEALTH
@@ -68,20 +87,37 @@ app.post("/api/telegram", async (req, res) => {
         const [, jobId, tech] = data.split(":");
 
         await updateAssignedCard(message, tech);
-        await forwardToTechnician(message, tech);
+        await forwardToTechnician(message, tech, jobId);
         await upsertCalendarEvent(jobId, tech);
-      }
-
-      // REASSIGN
-      if (data.startsWith("reassign:")) {
-        await showReassignButtons(message);
       }
 
       // TECH ON THE WAY
       if (data.startsWith("tech_on_the_way:")) {
         const [, jobId] = data.split(":");
-        console.log(`🚗 TECH ON THE WAY → job ${jobId}`);
-        // следующий шаг: update dispatcher card + calendar
+
+        console.log(`🚗 ON THE WAY → job ${jobId}`);
+
+        // 1️⃣ Update card text
+        await tg("editMessageCaption", {
+          chat_id: message.chat.id,
+          message_id: message.message_id,
+          caption: message.caption + `\n\n🚗 Status: On the way`,
+          parse_mode: "Markdown"
+        });
+
+        // 2️⃣ SET 30 MIN TIMER
+        await telegramQueue.add(
+          "SHOW_COMPLETE_BUTTONS",
+          {
+            chatId: message.chat.id,
+            messageId: message.message_id,
+            jobId
+          },
+          {
+            delay: 3 * 60 * 1000,
+            jobId: `show-complete-${jobId}`
+          }
+        );
       }
     }
   } catch (e) {
@@ -100,7 +136,8 @@ async function sendJobCard(chatId) {
   const encoded = encodeURIComponent(address);
 
   const caption = `
-🔥 *NEW JOB REQUEST*
+🆕 *NEW JOB REQUEST*
+Job #${jobId}     Assigned: —
 
 👤 Client: John Doe
 📞 Phone: 310-555-9922
@@ -138,7 +175,7 @@ async function updateAssignedCard(message, tech) {
   await tg("editMessageCaption", {
     chat_id: message.chat.id,
     message_id: message.message_id,
-    caption: message.caption + `\n\n🧑‍🔧 *Assigned to:* ${tech}`,
+    caption: message.caption.replace("Assigned: —", `Assigned: ${tech}`),
     parse_mode: "Markdown",
     reply_markup: {
       inline_keyboard: [
@@ -148,30 +185,18 @@ async function updateAssignedCard(message, tech) {
   });
 }
 
-async function showReassignButtons(message) {
-  await tg("editMessageReplyMarkup", {
-    chat_id: message.chat.id,
-    message_id: message.message_id,
-    reply_markup: {
-      inline_keyboard: [
-        [{ text: "Danil", callback_data: `assign:1241:Danil` }]
-      ]
-    }
-  });
-}
-
 // ======================================================
-// FORWARD → TECH GROUP (ONLY ONE BUTTON)
+// FORWARD → TECH GROUP
 // ======================================================
-async function forwardToTechnician(message) {
-  const chatId = TECH_CHATS.Danil;
+async function forwardToTechnician(message, tech, jobId) {
+  const chatId = TECH_CHATS[tech];
 
   const keyboard = {
     inline_keyboard: [
       [
         {
           text: "🚗 On the way",
-          callback_data: "tech_on_the_way:1241"
+          callback_data: `tech_on_the_way:${jobId}`
         }
       ]
     ]
@@ -180,13 +205,37 @@ async function forwardToTechnician(message) {
   await tg("sendPhoto", {
     chat_id: chatId,
     photo: message.photo.at(-1).file_id,
-    caption:
-      message.caption +
-      `\n\n🧑‍🔧 *This job is assigned to you*`,
+    caption: message.caption,
     parse_mode: "Markdown",
     reply_markup: keyboard
   });
 }
+
+// ======================================================
+// WORKER — 30 MIN TIMER
+// ======================================================
+new Worker(
+  "telegram-timers",
+  async job => {
+    if (job.name !== "SHOW_COMPLETE_BUTTONS") return;
+
+    const { chatId, messageId, jobId } = job.data;
+
+    console.log(`⏱ TIMER FIRED → job ${jobId}`);
+
+    await tg("editMessageReplyMarkup", {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "✅ Job Completed", callback_data: `job_completed:${jobId}` }],
+          [{ text: "🔁 Second Visit Required", callback_data: `second_visit:${jobId}` }]
+        ]
+      }
+    });
+  },
+  { connection: redis }
+);
 
 // ======================================================
 // CALENDAR (stub)

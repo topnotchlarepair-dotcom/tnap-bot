@@ -1,11 +1,11 @@
 // FILE: src/engine/telegram.commands.js
 /**
- * SUPREME COMMAND ENGINE (PURE)
- * + FSM CALLBACK HANDLER
+ * COMMAND ENGINE v2.0 (STABLE)
  * ------------------------------------
- * ✔ Commands (/start, /job, etc.)
- * ✔ FSM callback_query handler
- * ✔ No router assumptions
+ * ✔ Text commands (/start, /jobtest, etc.)
+ * ✔ FSM callback handling
+ * ✔ Full isolation between FSM and commands
+ * ✔ No crashes, no silent fails
  */
 
 import { telegramSender } from "./telegram.sender.js";
@@ -19,43 +19,50 @@ import { getJobById } from "../storage/jobs.js";
 
 export class CommandEngine {
   constructor() {
-    logInfo("📌 CommandEngine initialized (commands + FSM callbacks)");
+    logInfo("📌 CommandEngine v2.0 initialized");
   }
 
   // ======================================================
-  // ENTRY POINT (called by engine)
+  // ENTRY POINT
   // ======================================================
   async handle(update, next) {
-    // 1️⃣ FSM CALLBACKS (buttons)
-    if (update?.callback_query) {
-      return this.handleCallback(update.callback_query);
-    }
+    try {
+      // 1️⃣ CALLBACK QUERIES (FSM BUTTONS)
+      if (update?.callback_query) {
+        await this.handleCallback(update.callback_query);
+        return;
+      }
 
-    // 2️⃣ TEXT COMMANDS
-    const text = update?.message?.text;
-    if (!text || !text.startsWith("/")) {
-      return next?.();
-    }
-
-    const command = text.trim().split(" ")[0];
-
-    switch (command) {
-      case "/start":
-        return this.start(update);
-      case "/help":
-        return this.help(update);
-      case "/ping":
-        return this.ping(update);
-      case "/debug":
-        return this.debug(update);
-      case "/id":
-        return this.id(update);
-      case "/tech":
-        return this.tech(update);
-      case "/job":
-        return this.job(update);
-      default:
+      // 2️⃣ TEXT COMMANDS
+      const text = update?.message?.text;
+      if (!text || !text.startsWith("/")) {
         return next?.();
+      }
+
+      const command = text.trim().split(" ")[0];
+
+      switch (command) {
+        case "/start":
+          return this.start(update);
+        case "/help":
+          return this.help(update);
+        case "/ping":
+          return this.ping(update);
+        case "/debug":
+          return this.debug(update);
+        case "/id":
+          return this.id(update);
+        case "/tech":
+          return this.tech(update);
+        case "/job":
+          return this.job(update);
+        case "/jobtest":
+          return this.jobtest(update);
+        default:
+          return next?.();
+      }
+    } catch (err) {
+      logError("CommandEngine.handle error", err);
     }
   }
 
@@ -64,7 +71,6 @@ export class CommandEngine {
   // ======================================================
   async handleCallback(cb) {
     try {
-      // ACK callback immediately
       await telegramSender.answerCallback(cb.id);
 
       if (!cb.data) return;
@@ -86,8 +92,8 @@ export class CommandEngine {
       if (!role) return;
 
       const fsmPayload = {};
-      if (techId) {
-        fsmPayload.tech = job.availableTechs?.find(t => t.id === techId);
+      if (techId && job.availableTechs) {
+        fsmPayload.tech = job.availableTechs.find(t => t.id === techId);
       }
 
       await processFSMEvent({
@@ -97,7 +103,7 @@ export class CommandEngine {
         payload: fsmPayload
       });
     } catch (err) {
-      logError("FSM callback error", err);
+      logError("FSM callback failed", err);
     }
   }
 
@@ -111,7 +117,7 @@ export class CommandEngine {
 
     if (
       job.assignedTech &&
-      telegramUserId === job.assignedTech.telegramId
+      telegramUserId === job.assignedTech.telegramChatId
     ) {
       return "TECHNICIAN";
     }
@@ -144,13 +150,15 @@ export class CommandEngine {
   async id(update) {
     const chatId = this.getChatId(update);
     if (!chatId) return;
+
     await telegramSender.text(chatId, `Chat ID: <b>${chatId}</b>`);
   }
 
   async tech(update) {
     const chatId = this.getChatId(update);
     if (!chatId) return;
-    await telegramSender.text(chatId, "Выберите техника:", KB.technicians());
+
+    await telegramSender.text(chatId, "Select technician:", KB.technicians());
   }
 
   async job(update) {
@@ -192,6 +200,21 @@ Status: ${job.status}
     await telegramSender.dispatch(card, KB.technicians());
   }
 
+  async jobtest(update) {
+    const chatId = this.getChatId(update);
+    if (!chatId) return;
+
+    try {
+      await telegramSender.text(
+        chatId,
+        "🧪 Jobtest OK. Command engine alive.",
+        null
+      );
+    } catch (err) {
+      logError("/jobtest failed", err);
+    }
+  }
+
   async help(update) {
     const chatId = this.getChatId(update);
     if (!chatId) return;
@@ -206,6 +229,7 @@ Status: ${job.status}
 /id – show chat ID
 /tech – choose technician
 /job – send test job
+/jobtest – health check
 /ping – bot status
 /debug – metrics
       `.trim(),
@@ -253,6 +277,6 @@ Engine Uptime: ${Math.round((Date.now() - m.engineStart) / 1000)}s
   }
 }
 
-// экспортируем ИНСТАНС
+// EXPORT SINGLE INSTANCE
 export const commandEngine = new CommandEngine();
 

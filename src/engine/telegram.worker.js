@@ -16,11 +16,12 @@ import {
   telegramSendDocument
 } from "../services/telegram.js";
 
-const QUEUE_NAME = "telegram:outgoing";
+// ❗ BullMQ queue name MUST NOT contain ":"
+const QUEUE_NAME = "telegram_outgoing";
 
 export const telegramWorker = new Worker(
   QUEUE_NAME,
-  async job => {
+  async (job) => {
     const {
       type,
       chatId,

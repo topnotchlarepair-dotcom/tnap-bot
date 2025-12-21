@@ -1,24 +1,13 @@
-# FILE: Dockerfile
-# TNAP BOT — CLOUD RUN PRODUCTION IMAGE
-# ------------------------------------
-# ✔ Fast startup
-# ✔ Cloud Run compliant
-# ✔ No dev dependencies
-# ✔ Stable Node process
-# ✔ Correct PORT handling
+# Dockerfile
+# TNAP BOT — Cloud Run Production (FINAL)
 
-FROM node:18-slim
+FROM node:20-alpine
 
 # -----------------------------------------------------
-# System-level best practices
+# Environment
 # -----------------------------------------------------
 ENV NODE_ENV=production
 ENV PORT=8080
-
-# Optional but recommended: avoid zombie processes
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    dumb-init \
-  && rm -rf /var/lib/apt/lists/*
 
 # -----------------------------------------------------
 # App directory
@@ -26,13 +15,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # -----------------------------------------------------
-# Install dependencies (cached layer)
+# Dependencies (cached layer)
 # -----------------------------------------------------
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
 # -----------------------------------------------------
-# Copy application source
+# App source
 # -----------------------------------------------------
 COPY . .
 
@@ -42,9 +31,7 @@ COPY . .
 EXPOSE 8080
 
 # -----------------------------------------------------
-# Start app (Cloud Run entrypoint)
+# Start application
 # -----------------------------------------------------
-ENTRYPOINT ["dumb-init", "--"]
 CMD ["node", "src/index.js"]
-
 

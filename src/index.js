@@ -15,7 +15,7 @@ app.use(express.json());
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
 const REDIS_URL = process.env.REDIS_URL;
-const SERVER_PORT = process.env.PORT || 8080;
+const PORT = process.env.PORT || 8080;
 
 // DISPATCH CHAT
 const DISPATCH_CHAT_ID = -1003362682354;
@@ -27,27 +27,10 @@ const TECH_CHATS = {
 
 if (!BOT_TOKEN) {
   console.error("❌ BOT_TOKEN is not set");
-  process.exit(1);
-}
-
-if (!REDIS_URL) {
-  console.error("❌ REDIS_URL is not set");
-  process.exit(1);
 }
 
 // ======================================================
-// REDIS + QUEUE
-// ======================================================
-const redis = new IORedis(REDIS_URL, {
-  maxRetriesPerRequest: null
-});
-
-const telegramQueue = new Queue("telegram-timers", {
-  connection: redis
-});
-
-// ======================================================
-// HEALTH
+// HEALTH — MUST START FIRST
 // ======================================================
 app.get("/", (_, res) => res.send("TNAP BOT OK"));
 
@@ -57,10 +40,6 @@ app.get("/", (_, res) => res.send("TNAP BOT OK"));
 app.post("/api/telegram", async (req, res) => {
   const update = req.body;
 
-  if (!update.message && !update.callback_query) {
-    return res.json({ ok: true });
-  }
-
   try {
     // /jobtest
     if (
@@ -69,22 +48,18 @@ app.post("/api/telegram", async (req, res) => {
       update.message.text?.startsWith("/jobtest")
     ) {
       await sendJobCard(DISPATCH_CHAT_ID);
-      return res.json({ ok: true });
     }
 
     // CALLBACKS
     if (update.callback_query) {
       const { id, data, message } = update.callback_query;
-
       await answerCallback(id);
 
       // ASSIGN TECH
       if (data.startsWith("assign:")) {
         const [, jobId, tech] = data.split(":");
-
         await updateAssignedCard(message, tech);
         await forwardToTechnician(message, tech, jobId);
-        await upsertCalendarEvent(jobId, tech);
       }
 
       // ON THE WAY
@@ -94,33 +69,85 @@ app.post("/api/telegram", async (req, res) => {
         await tg("editMessageCaption", {
           chat_id: message.chat.id,
           message_id: message.message_id,
-          caption: message.caption + `\n\n🚗 Status: On the way`,
+          caption: message.caption + "\n\n🚗 Status: On the way",
           parse_mode: "Markdown"
         });
 
-        await telegramQueue.add(
-          "SHOW_COMPLETE_BUTTONS",
-          {
-            chatId: message.chat.id,
-            messageId: message.message_id,
-            jobId
-          },
-          {
-            delay: 5 * 60 * 1000, // 5 MIN TEST
-            jobId: `show-complete-${jobId}`
-          }
-        );
+        // timer only if redis is available
+        if (global.telegramQueue) {
+          await global.telegramQueue.add(
+            "SHOW_COMPLETE_BUTTONS",
+            {
+              chatId: message.chat.id,
+              messageId: message.message_id,
+              jobId
+            },
+            {
+              delay: 5 * 60 * 1000, // 5 min test
+              jobId: `show-complete-${jobId}`
+            }
+          );
+        }
       }
     }
   } catch (e) {
     console.error("❌ Telegram handler error:", e);
   }
 
-  return res.json({ ok: true });
+  res.json({ ok: true });
 });
 
 // ======================================================
-// DISPATCH CARD
+// SERVER — CLOUD RUN REQUIREMENT
+// ======================================================
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`🚀 TNAP BOT LIVE on port ${PORT}`);
+});
+
+// ======================================================
+// REDIS + QUEUE + WORKER (NON-FATAL)
+// ======================================================
+if (REDIS_URL) {
+  try {
+    const redis = new IORedis(REDIS_URL, {
+      maxRetriesPerRequest: null
+    });
+
+    global.telegramQueue = new Queue("telegram-timers", {
+      connection: redis
+    });
+
+    new Worker(
+      "telegram-timers",
+      async job => {
+        if (job.name !== "SHOW_COMPLETE_BUTTONS") return;
+
+        const { chatId, messageId, jobId } = job.data;
+
+        await tg("editMessageReplyMarkup", {
+          chat_id: chatId,
+          message_id: messageId,
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "✅ Job Completed", callback_data: `job_completed:${jobId}` }],
+              [{ text: "🔁 Second Visit Required", callback_data: `second_visit:${jobId}` }]
+            ]
+          }
+        });
+      },
+      { connection: redis }
+    );
+
+    console.log("✅ Redis + Worker started");
+  } catch (e) {
+    console.error("⚠️ Redis disabled:", e.message);
+  }
+} else {
+  console.log("⚠️ REDIS_URL not set — timers disabled");
+}
+
+// ======================================================
+// UI HELPERS
 // ======================================================
 async function sendJobCard(chatId) {
   const jobId = 1241;
@@ -139,30 +166,19 @@ Job #${jobId}     Assigned: —
 📅 2025-12-10 | 10:00–12:00
 `;
 
-  const keyboard = {
-    inline_keyboard: [
-      [
-        { text: "🗺 Google Maps", url: `https://www.google.com/maps/dir/?api=1&destination=${encoded}` },
-        { text: "🍎 Apple Maps", url: `https://maps.apple.com/?daddr=${encoded}` }
-      ],
-      [
-        { text: "Danil", callback_data: `assign:${jobId}:Danil` }
-      ]
-    ]
-  };
-
   await tg("sendPhoto", {
     chat_id: chatId,
     photo: `https://maps.googleapis.com/maps/api/streetview?size=600x300&location=${encoded}&key=${GOOGLE_MAPS_API_KEY}`,
     caption,
     parse_mode: "Markdown",
-    reply_markup: keyboard
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: "Danil", callback_data: `assign:${jobId}:Danil` }]
+      ]
+    }
   });
 }
 
-// ======================================================
-// UPDATE DISPATCH CARD
-// ======================================================
 async function updateAssignedCard(message, tech) {
   await tg("editMessageCaption", {
     chat_id: message.chat.id,
@@ -172,54 +188,32 @@ async function updateAssignedCard(message, tech) {
   });
 }
 
-// ======================================================
-// FORWARD → TECH GROUP
-// ======================================================
 async function forwardToTechnician(message, tech, jobId) {
-  const chatId = TECH_CHATS[tech];
-
-  const keyboard = {
-    inline_keyboard: [
-      [{ text: "🚗 On the way", callback_data: `tech_on_the_way:${jobId}` }]
-    ]
-  };
-
   await tg("sendPhoto", {
-    chat_id: chatId,
+    chat_id: TECH_CHATS[tech],
     photo: message.photo.at(-1).file_id,
     caption: message.caption,
     parse_mode: "Markdown",
-    reply_markup: keyboard
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: "🚗 On the way", callback_data: `tech_on_the_way:${jobId}` }]
+      ]
+    }
   });
 }
 
 // ======================================================
-// WORKER — TIMER
+// TELEGRAM API
 // ======================================================
-new Worker(
-  "telegram-timers",
-  async job => {
-    if (job.name !== "SHOW_COMPLETE_BUTTONS") return;
+async function tg(method, payload) {
+  return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+}
 
-    const { chatId, messageId, jobId } = job.data;
-
-    await tg("editMessageReplyMarkup", {
-      chat_id: chatId,
-      message_id: messageId,
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: "✅ Job Completed", callback_data: `job_completed:${jobId}` }],
-          [{ text: "🔁 Second Visit Required", callback_data: `second_visit:${jobId}` }]
-        ]
-      }
-    });
-  },
-  { connection: redis }
-);
-
-// ======================================================
-// STUB
-// ======================================================
-async function upsertCalendarEvent(jobId, tech) {
-  console.log(`📅 Calendar update → job ${jobId},
+async function answerCallback(id) {
+  await tg("answerCallbackQuery", { callback_query_id: id });
+}
 

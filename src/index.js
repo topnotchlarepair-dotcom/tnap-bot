@@ -14,10 +14,10 @@ const PORT = process.env.PORT || 8080;
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const GOOGLE_MAPS_API_KEY = process.env.GOOGLE_MAPS_API_KEY;
 
-// ✅ DISPATCH CHAT ID
+// DISPATCH CHAT
 const DISPATCH_CHAT_ID = -1003362682354;
 
-// ✅ REAL TECH GROUP CHAT IDS
+// TECH GROUPS
 const TECH_CHATS = {
   Danil: -1003494289706
 };
@@ -38,32 +38,13 @@ app.get("/", (_, res) => res.send("TNAP BOT OK"));
 app.post("/api/telegram", async (req, res) => {
   const update = req.body;
 
-  // ==================================================
-  // LOG CHAT IDS (DEBUG)
-  // ==================================================
-  if (update.message?.chat) {
-    console.log("📣 INCOMING MESSAGE CHAT", {
-      chat_id: update.message.chat.id,
-      type: update.message.chat.type,
-      title: update.message.chat.title || null
-    });
-  }
-
-  if (update.callback_query?.message?.chat) {
-    console.log("📣 INCOMING CALLBACK CHAT", {
-      chat_id: update.callback_query.message.chat.id,
-      type: update.callback_query.message.chat.type,
-      title: update.callback_query.message.chat.title || null
-    });
-  }
-
   if (!update.message && !update.callback_query) {
     return res.json({ ok: true });
   }
 
   try {
     // ==================================================
-    // COMMAND: /jobtest (DISPATCH ONLY)
+    // /jobtest — dispatch only
     // ==================================================
     if (
       update.message &&
@@ -82,18 +63,25 @@ app.post("/api/telegram", async (req, res) => {
 
       await answerCallback(id);
 
+      // ASSIGN TECH
       if (data.startsWith("assign:")) {
         const [, jobId, tech] = data.split(":");
-
-        console.log("🧑‍🔧 ASSIGN →", tech);
 
         await updateAssignedCard(message, tech);
         await forwardToTechnician(message, tech);
         await upsertCalendarEvent(jobId, tech);
       }
 
+      // REASSIGN
       if (data.startsWith("reassign:")) {
         await showReassignButtons(message);
+      }
+
+      // TECH ON THE WAY
+      if (data.startsWith("tech_on_the_way:")) {
+        const [, jobId] = data.split(":");
+        console.log(`🚗 TECH ON THE WAY → job ${jobId}`);
+        // следующий шаг: update dispatcher card + calendar
       }
     }
   } catch (e) {
@@ -104,7 +92,7 @@ app.post("/api/telegram", async (req, res) => {
 });
 
 // ======================================================
-// UI FUNCTIONS
+// UI — DISPATCH CARD
 // ======================================================
 async function sendJobCard(chatId) {
   const jobId = 1241;
@@ -143,6 +131,9 @@ async function sendJobCard(chatId) {
   });
 }
 
+// ======================================================
+// UPDATE DISPATCH CARD
+// ======================================================
 async function updateAssignedCard(message, tech) {
   await tg("editMessageCaption", {
     chat_id: message.chat.id,
@@ -150,7 +141,9 @@ async function updateAssignedCard(message, tech) {
     caption: message.caption + `\n\n🧑‍🔧 *Assigned to:* ${tech}`,
     parse_mode: "Markdown",
     reply_markup: {
-      inline_keyboard: [[{ text: "🔁 Change technician", callback_data: `reassign:1241` }]]
+      inline_keyboard: [
+        [{ text: "🔁 Change technician", callback_data: `reassign:1241` }]
+      ]
     }
   });
 }
@@ -168,23 +161,30 @@ async function showReassignButtons(message) {
 }
 
 // ======================================================
-// FORWARD TO TECH GROUP
+// FORWARD → TECH GROUP (ONLY ONE BUTTON)
 // ======================================================
-async function forwardToTechnician(message, tech) {
-  const chatId = TECH_CHATS[tech];
+async function forwardToTechnician(message) {
+  const chatId = TECH_CHATS.Danil;
 
-  console.log("📤 FORWARD TO TECH", { tech, chatId });
-
-  if (!chatId) {
-    console.error("❌ TECH CHAT ID NOT FOUND");
-    return;
-  }
+  const keyboard = {
+    inline_keyboard: [
+      [
+        {
+          text: "🚗 On the way",
+          callback_data: "tech_on_the_way:1241"
+        }
+      ]
+    ]
+  };
 
   await tg("sendPhoto", {
     chat_id: chatId,
     photo: message.photo.at(-1).file_id,
-    caption: message.caption + "\n\n🧑‍🔧 *Assigned to you*",
-    parse_mode: "Markdown"
+    caption:
+      message.caption +
+      `\n\n🧑‍🔧 *This job is assigned to you*`,
+    parse_mode: "Markdown",
+    reply_markup: keyboard
   });
 }
 

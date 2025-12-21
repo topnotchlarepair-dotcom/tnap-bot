@@ -1,5 +1,5 @@
 /**
- * FSM v1.1 — Telegram Dispatch System
+ * FSM v1.2 — Telegram Dispatch System
  * Scope: Job Execution ONLY (no payments)
  * Status: APPROVED
  */
@@ -7,17 +7,23 @@
 import { acquireLock, releaseLock } from "../utils/lock.js";
 import { updateJobState, getJobById } from "../storage/jobs.js";
 import { renderJobCard } from "./renderer.js";
+
 import {
   notifyClient,
   notifyTechnician
 } from "../services/notifications.js";
+
 import {
   addCalendarGuest,
   removeCalendarGuest,
   rescheduleCalendarEvent,
   cancelCalendarEvent
 } from "../services/calendar.js";
-import { updateTelegramMessage } from "../services/telegram.js";
+
+import {
+  updateTelegramMessage,
+  sendTelegramMessage
+} from "../services/telegram.js";
 
 /* ======================================================
    FSM STATES
@@ -66,8 +72,6 @@ function canExecute(event, role, state) {
     DISPATCH_CANCEL:
       role === "DISPATCHER" &&
       [STATES.ASSIGNED, STATES.JOB_IN_PROGRESS].includes(state),
-    DISPATCH_FORCE_IN_PROGRESS:
-      role === "DISPATCHER" && state === STATES.JOB_IN_PROGRESS,
 
     TECH_ON_THE_WAY: role === "TECHNICIAN" && state === STATES.ASSIGNED,
     TECH_COMPLETE_JOB:
@@ -94,7 +98,6 @@ export async function processFSMEvent({
   try {
     const job = await getJobById(jobId);
     if (!job) return;
-
     if (!canExecute(event, role, job.state)) return;
 
     switch (event) {
@@ -118,16 +121,16 @@ export async function processFSMEvent({
         await onTheWay(job);
         break;
 
-      case EVENTS.SYSTEM_TIMER_30MIN:
-        await unlockCompletion(job);
-        break;
-
       case EVENTS.TECH_COMPLETE_JOB:
         await completeJob(job, payload);
         break;
 
       case EVENTS.TECH_SCHEDULE_FOLLOW_UP:
         await followUp(job, payload);
+        break;
+
+      case EVENTS.SYSTEM_TIMER_30MIN:
+        await unlockCompletion(job);
         break;
     }
   } finally {
@@ -144,18 +147,35 @@ async function assignTech(job, tech) {
   });
 
   await addCalendarGuest(job.calendarEventId, tech.email);
+
+  // 🔔 auxiliary notifications (SMS / future)
   await notifyTechnician(tech, "assigned", job);
 
-  await updateTelegramMessage(
-    job.chatId,
-    job.messageId,
-    renderJobCard({ ...job, state: STATES.ASSIGNED, assignedTech: tech })
-  );
+  const card = renderJobCard({
+    ...job,
+    state: STATES.ASSIGNED,
+    assignedTech: tech
+  });
+
+  // 🧑‍💼 update dispatcher message
+  await updateTelegramMessage(job.chatId, job.messageId, card);
+
+  // 🧑‍🔧 SEND NEW MESSAGE TO TECHNICIAN (CRITICAL)
+  if (tech.telegramChatId) {
+    await sendTelegramMessage(
+      tech.telegramChatId,
+      card.text,
+      card.keyboard
+    );
+  }
 }
 
 async function reassignTech(job, newTech) {
   if (job.assignedTech) {
-    await removeCalendarGuest(job.calendarEventId, job.assignedTech.email);
+    await removeCalendarGuest(
+      job.calendarEventId,
+      job.assignedTech.email
+    );
     await notifyTechnician(job.assignedTech, "reassigned_off", job);
   }
 
@@ -166,15 +186,25 @@ async function reassignTech(job, newTech) {
     assignedTech: newTech
   });
 
-  await updateTelegramMessage(
-    job.chatId,
-    job.messageId,
-    renderJobCard({ ...job, assignedTech: newTech })
-  );
+  const card = renderJobCard({
+    ...job,
+    assignedTech: newTech
+  });
+
+  await updateTelegramMessage(job.chatId, job.messageId, card);
+
+  if (newTech.telegramChatId) {
+    await sendTelegramMessage(
+      newTech.telegramChatId,
+      card.text,
+      card.keyboard
+    );
+  }
 }
 
 async function reschedule(job, newTime) {
   await rescheduleCalendarEvent(job.calendarEventId, newTime);
+
   await updateTelegramMessage(
     job.chatId,
     job.messageId,
